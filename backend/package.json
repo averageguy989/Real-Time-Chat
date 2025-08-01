@@ -5,13 +5,14 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "ts-node src/index.ts",
-   "dev": "nodemon src/index.ts --exec ts-node"
+    "dev": "nodemon src/index.ts --exec ts-node"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "socket.io": "^4.8.1",
     "ws": "^8.18.3"
   },
   "devDependencies": {

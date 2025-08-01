@@ -1,124 +1,131 @@
 import { error } from "console";
-import { WebSocketServer, WebSocket } from "ws";
+import { Server, Socket } from "socket.io";
 
-const wss = new WebSocketServer({ port: 8080 });
+const io = new Server(8080, {
+    cors: {
+        origin: "http://localhost:5173",
+        methods: ["GET", "POST"]
+    }
+});
 
 console.log('WebSocket server is running on ws://localhost:8080');
 
-type playerSocket = WebSocket & {
-    isAlive: boolean;
+type player = {
+    name: string;
+    socket: Socket;
 }
 
-type room = {
+type Room = {
     id: number;
-    players: playerSocket[];
+    players: player[];
 }
 
-const rooms: room[] = [];
+const rooms: Room[] = [];
 
-function createRoom(id: number, ws: playerSocket): any{
-    for(let i=0;i<rooms.length;i++){
+
+function createRoom(id: number, socket: Socket): any{
+    for(let i = 0; i < rooms.length; i++){
         if(rooms[i].id === id){
-            ws.send(JSON.stringify({ type: "error", message: "Room already exists" }));
+            socket.emit("Error", "Room already exists");
             return;
         }
     }
-    rooms.push({
-        id: id,
-        players: []
-    });
-    ws.send(JSON.stringify({ type: "success", message: "Successfully created room" }));
+    const room: Room = { id, players: [] };
+    rooms.push(room);
+    socket.emit("RoomCreated", id);
     return;
 }
 
-function joinRoom(id: number, ws: playerSocket, name: string): any {
-    for(let i=0;i<rooms.length;i++){
+function joinRoom(id: number,name: string, socket: Socket): any{
+    for(let i = 0; i < rooms.length; i++){
         if(rooms[i].id === id){
-            rooms[i].players.push(ws);
-            for(let j=0;j<rooms[i].players.length;j++){
-                if(rooms[i].players[j] === ws){
-                    rooms[i].players[j].send(JSON.stringify({ type: "success", message: "Successfully joined room", name: name }));
+            rooms[i].players.push({name,socket});
+            socket.emit("RoomJoined", id);
+            return;
+        }
+    }
+    socket.emit("Error", "Room not found");
+    return;
+}
+
+function SendMessage(id: number, name: string, message: string, socket: Socket): void {
+    for (let i = 0; i < rooms.length; i++) {
+
+        if (rooms[i].id === id) {
+            
+            const ChatRoom: Room = rooms[i];
+            let found = false;
+
+            for (let j = 0; j < ChatRoom.players.length; j++) {
+                if (ChatRoom.players[j].socket === socket) {
+                    found = true;
+                    break;
                 }
             }
-            return;
-        }
-    }
-    ws.send(JSON.stringify({ type: "error", message: "Room not found" }));
-    return;
-}
 
-function leaveRoom(id: number, ws: playerSocket, name: string): any {
-    for(let i=0;i<rooms.length;i++){
-        if(rooms[i].id === id){
-            rooms[i].players = rooms[i].players.filter(player => player !== ws);
-            for(let j=0;j<rooms[i].players.length;j++){
-                if(rooms[i].players[j] === ws){
-                    rooms[i].players[j].send(JSON.stringify({ type: "success", message: "Successfully left room", name: name }));
-                }
-            }
-            return;
-        }
-    }
-    ws.send(JSON.stringify({ type: "error", message: "Room not found" }));
-    return;
-}
-
-function sendMessage(id: number, ws: playerSocket, message: string): any {
-    for(let i=0;i<rooms.length;i++){
-        if(rooms[i].id === id){
-            rooms[i].players.forEach(player => player.send(JSON.stringify({ type: "message", message: message })));
-            return;
-        }
-    }
-    ws.send(JSON.stringify({ type: "error", message: "Room not found" }));
-    return;
-}
-
-wss.on("connection", (ws: playerSocket) => {
-    console.log("Client connected");
-
-    ws.on("pong", () => { 
-        ws.isAlive = true;
-    });
-
-    ws.on("message", (message: any) => {
-        const data = JSON.parse(message.toString());
-        if (data.type === "createRoom") {
-            createRoom(data.id, ws);
-        } else if (data.type === "joinRoom") {
-            console.log("Joining room");
-            joinRoom(data.id, ws, data.name);
-        } else if (data.type === "leaveRoom") {
-            console.log("Leaving room");
-            leaveRoom(data.id, ws, data.name);
-        } else if (data.type === "sendMessage") {
-            sendMessage(data.id, ws, data.message);
-        }
-    });
-
-    ws.on("close", () => {
-        console.log("Client disconnected");
-    });
-});
-
-
-setInterval(() => {
-    for(let i=0;i<rooms.length;i++){
-        rooms[i].players.forEach(player => {
-            if(!player.isAlive){
-                player.close();
-                rooms[i].players = rooms[i].players.filter(p => p !== player);
+            if (found) {
+                // Send message to all players except the sender
+                ChatRoom.players.forEach(player => {
+                    if (player.socket !== socket) {
+                        player.socket.emit("ReceiveMessage", { name, message });
+                    }
+                });
+                socket.emit("MessageReceived",message);
+                return;
             } else {
-                player.isAlive = false;
-                player.ping();
+                socket.emit("Error", "You are not in the room. Join the room first.");
+                return;
             }
-        });
-        if(rooms[i].players.length === 0){
-            rooms.splice(i, 1);
         }
     }
-}, 30000);
 
-wss.on("error", (error) => {
-    console.error("WebSocket error:", error);
+    socket.emit("Error", "Room not found.");
+    return;
+}
+
+function LeaveRoom(id: number, name: string, socket: Socket): any {
+    for (let i = 0; i < rooms.length; i++) {
+        if (rooms[i].id === id) {
+            const room = rooms[i];
+
+            room.players = room.players.filter(player => player.socket.id !== socket.id);
+
+            console.log(`User ${name} left room ${id}`);
+
+            if (room.players.length === 0) {
+                rooms.splice(i, 1);
+                console.log(`Room ${id} deleted because it's empty.`);
+            }
+            return;
+        }
+    }
+    return;
+}
+
+
+io.on("connection", (socket: Socket) => {
+    console.log("A user connected");
+    socket.on("CreateRoom", (id: number) => {
+        console.log("Creating room", id);
+        createRoom(id, socket);
+    });
+
+    socket.on("JoinRoom", (id: number,name: string) => {
+        console.log("Joining room", id);
+        joinRoom(id,name,socket);
+    });
+
+    socket.on("SendMessage", ({ id, name, message }: { id: number; name: string; message: string }) => {
+        SendMessage(id, name, message, socket);
+    });    
+
+    socket.on("LeaveRoom",({id,name}: {id: number; name: string}) => {
+        LeaveRoom(id,name,socket);
+    }) 
+    socket.on("disconnect", () => {
+        console.log("A user disconnected")
+    })
 });
+
+
+
